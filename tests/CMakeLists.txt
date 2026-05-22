@@ -23,4 +23,4 @@ target_link_libraries(unit_tests
 
 include(GoogleTest)
 gtest_discover_tests(unit_tests
-        DISCOVERY_MODE PRE_TEST)
+        DISCOVERY_MODE POST_BUILD)
