@@ -6,111 +6,114 @@
 #include <string>
 #include <stdexcept>
 
-int main(int argc, char* argv[]) {
-    // 1. Проверяем количество аргументов
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+/*!
+ * \brief Функция для парсинга и валидации ширины форматирования строки
+ * \param [in] widthArg – строковый аргумент с шириной из командной строки
+ * \return int – валидное целочисленное значение ширины строки
+ * \throw FormatError – в случае некорректного формата или выхода за границы диапазона [40, 120]
+ */
+int parseAndValidateWidth(const std::string& widthArg) {
+    std::istringstream ss(widthArg);
+    int parsedWidth = 0;
+    std::string rest;
+
+    if (!(ss >> parsedWidth) || (ss >> rest && !rest.empty())) {
+        throw FormatError{ErrorCode::nonIntegerWidth};
+    }
+
+    for (char c : widthArg) {
+        if (c != '-' && !std::isdigit(static_cast<unsigned char>(c))) {
+            throw FormatError{ErrorCode::nonIntegerWidth};
+        }
+    }
+
+    if (parsedWidth < 40 || parsedWidth > 120) {
+        throw FormatError{ErrorCode::invalidLineWidth};
+    }
+
+    return parsedWidth;
+}
+
+/*!
+ * \brief Функция для чтения содержимого входного файла
+ * \param [in] inputPath – путь к входному файлу
+ * \return std::string – считанный из файла текст
+ * \throw FormatError – если файл не найден или оказался пустым
+ */
+std::string readInputFile(const std::string& inputPath) {
+    std::ifstream inputFile(inputPath);
+    if (!inputFile.is_open()) {
+        throw FormatError{ErrorCode::inputFileNotFound};
+    }
+
+    std::ostringstream ss;
+    ss << inputFile.rdbuf();
+    std::string text = ss.str();
+    inputFile.close();
+
+    if (text.empty()) {
+        throw FormatError{ErrorCode::emptyInputFile};
+    }
+
+    return text;
+}
+
+/*!
+ * \brief Функция для записи отформатированных строк в выходной файл
+ * \param [in] outputPath – путь к выходному файлу
+ * \param [in] lines – вектор сформированных строк для записи
+ * \throw FormatError – если количество строк превышает 1000 или файл не удалось создать
+ */
+void writeOutputFile(const std::string& outputPath, const std::vector<std::string>& lines) {
+    if (static_cast<int>(lines.size()) > 1000) {
+        throw FormatError{ErrorCode::tooManyOutputLines};
+    }
+
+    std::ofstream outputFile(outputPath);
+    if (!outputFile.is_open()) {
+        throw FormatError{ErrorCode::outputFileCreateFail};
+    }
+
+    for (const std::string& line : lines) {
+        outputFile << line << "\n";
+    }
+    outputFile.close();
+}
+
+// ГЛАВНАЯ ФУНКЦИЯ
+
+int main(int argc, const char* const argv[]) {
     if (argc != 4) {
         std::cerr << "Использование: format <входной_файл> <ширина> <выходной_файл>\n";
         return 1;
     }
 
-    const std::string inputPath  = argv[1];
-    const std::string widthArg   = argv[2];
-    const std::string outputPath = argv[3];
+    try {
+        // Шаг 1. Парсинг и валидация аргумента ширины (передаем argv[2])
+        int lineWidth = parseAndValidateWidth(argv[2]);
 
-    // 2. Читаем ширину строки
-    int lineWidth = 0;
-    {
-        // 2.1 Проверяем, что это целое число
-        std::istringstream ss(widthArg);
-        int parsedWidth = 0;
-        std::string rest;
-        if (!(ss >> parsedWidth) || (ss >> rest && !rest.empty())) {
-            FormatError err;
-            err.code = ErrorCode::nonIntegerWidth;
-            std::cerr << err.getMessage() << "\n";
+        // Шаг 2. Чтение входных данных из файла (передаем argv[1])
+        std::string text = readInputFile(argv[1]);
+
+        // Шаг 3. Инициализация форматировщика и обработка текста
+        TextFormatter formatter(lineWidth);
+        FormatError parseResult = formatter.parseWords(text);
+        if (parseResult.code != ErrorCode::noError) {
+            std::cerr << parseResult.getMessage() << "\n";
             return 1;
         }
-        // Доп. проверка: только цифры (допускаем знак минуса для диагностики)
-        for (char c : widthArg) {
-            if (c != '-' && !std::isdigit(static_cast<unsigned char>(c))) {
-                FormatError err2;
-                err2.code = ErrorCode::nonIntegerWidth;
-                std::cerr << err2.getMessage() << "\n";
-                return 1;
-            }
-        }
-        lineWidth = parsedWidth;
-    }
-    // 2.2 Проверяем диапазон
-    if (lineWidth < 40 || lineWidth > 120) {
-        FormatError err;
-        err.code = ErrorCode::invalidLineWidth;
+
+        formatter.buildLines();
+
+        // Шаг 4. Запись результатов работы в файл (передаем argv[3])
+        writeOutputFile(argv[3], formatter.getOutputLines());
+
+    } catch (const FormatError& err) {
+        // Централизованный вывод ошибок валидации и файловой системы
         std::cerr << err.getMessage() << "\n";
         return 1;
     }
-
-    // 3. Открываем входной файл
-    std::ifstream inputFile(inputPath);
-    if (!inputFile.is_open()) {
-        FormatError err;
-        err.code = ErrorCode::inputFileNotFound;
-        std::cerr << err.getMessage() << "\n";
-        return 1;
-    }
-
-    // 3.2 Проверяем, не пуст ли файл
-    std::string text;
-    {
-        std::ostringstream ss;
-        ss << inputFile.rdbuf();
-        text = ss.str();
-    }
-    inputFile.close();
-
-    if (text.empty()) {
-        FormatError err;
-        err.code = ErrorCode::emptyInputFile;
-        std::cerr << err.getMessage() << "\n";
-        return 1;
-    }
-
-    // 5. Создаём объект форматировщика
-    TextFormatter formatter(lineWidth);
-
-    // 6. Разбираем текст на слова
-    FormatError parseResult = formatter.parseWords(text);
-    if (parseResult.code != ErrorCode::noError) {
-        std::cerr << parseResult.getMessage() << "\n";
-        return 1;
-    }
-
-    // 7. Формируем строки
-    formatter.buildLines();
-
-    // 7.1 Проверяем количество строк
-    if (static_cast<int>(formatter.getOutputLines().size()) > 1000) {
-        FormatError err;
-        err.code = ErrorCode::tooManyOutputLines;
-        std::cerr << err.getMessage() << "\n";
-        return 1;
-    }
-
-    // 8. Открываем выходной файл
-    std::ofstream outputFile(outputPath);
-    if (!outputFile.is_open()) {
-        FormatError err;
-        err.code = ErrorCode::outputFileCreateFail;
-        std::cerr << err.getMessage() << "\n";
-        return 1;
-    }
-
-    // 9. Записываем строки
-    for (const std::string& line : formatter.getOutputLines()) {
-        outputFile << line << "\n";
-    }
-
-    // 10. Закрываем файлы
-    outputFile.close();
 
     return 0;
 }

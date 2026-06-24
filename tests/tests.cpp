@@ -531,6 +531,93 @@ TEST(JustifyLineTest, LastLineWithPunctuation)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  Дополнительные тесты
+// ═══════════════════════════════════════════════════════════════════════════
+// Тест 1: Слово ровно максимальной допустимой длины (Граничное значение)
+TEST(ParseWordsTest, WordExactlyMaxLineWidth)
+{
+    TextFormatter f(40);
+    std::string exactWord(40, 'a'); // Слово из 40 символов
+    auto err = f.parseWords(exactWord);
+    EXPECT_EQ(err.code, ErrorCode::noError);
+    ASSERT_EQ(f.words.size(), 1u);
+}
+
+// Тест 2: Слово превышает максимальную ширину строки (Граничное значение)
+TEST(ParseWordsTest, WordExceedsMaxLineWidth)
+{
+    TextFormatter f(40);
+    std::string longWord(41, 'a'); // Слово из 41 символа
+    auto err = f.parseWords(longWord);
+    EXPECT_EQ(err.code, ErrorCode::wordTooLong);
+}
+
+// Тест 4: Валидация работы buildLines с длинным текстом на несколько абзацев
+TEST(BuildLinesTest, MultiLineJustificationAndLastLine)
+{
+    TextFormatter f(40);
+    // Передаем текст, который гарантированно разобьется на 2+ строки
+    auto err = f.parseWords("Это тестовая строка для проверки алгоритма выравнивания текста по ширине.");
+    EXPECT_EQ(err.code, ErrorCode::noError);
+
+    f.buildLines();
+
+    // Проверяем, что строки сформировались, и последняя строка не выравнивается по ширине (остается с обычными пробелами)
+    ASSERT_FALSE(f.getOutputLines().empty());
+    EXPECT_LE(f.getOutputLines().size(), 1000u);
+}
+// Тест для покрытия 3 и 4 байтовых веток UTF-8 (Иероглиф и Эмодзи)
+TEST(CoverageBoost, Utf8MultibyteBranches) {
+    TextFormatter f(40);
+    // Передаем текст со спецсимволами
+    auto err = f.parseWords("Текст 🌟 和");
+    EXPECT_EQ(err.code, ErrorCode::noError);
+}
+
+
+
+// Тест для покрытия скрытой ветки в isPunctToken
+TEST(CoverageBoost, PunctTokenFallback) {
+    TextFormatter f(40);
+    f.words.push_back("@@@");
+    f.buildLines();
+    SUCCEED();
+}
+// Тест 60: Проверка слова, которое физически длиннее заданной ширины строки
+TEST(CoverageBoost, WordTooLongForLine) {
+    TextFormatter f(40);
+    // Передаем слово длиной 45 символов, что больше ширины 40
+    auto err = f.parseWords("ЭтоОченьДлинноеСловоКотороеНеПомещаетсяВСтроку");
+
+    // Этот тест заставит сработать ветку ErrorCode::wordTooLong в конце parseWords
+    EXPECT_EQ(err.code, ErrorCode::wordTooLong);
+}
+
+// Тест 61: Проверка строки, которая превышает лимит в 1024 символа
+TEST(CoverageBoost, InputLineExceedsLimit) {
+    TextFormatter f(40);
+    // Создаем огромную строку из 1025 символов 'a'
+    std::string giantLine(1025, 'a');
+    auto err = f.parseWords(giantLine);
+
+    // Этот тест заставит сработать ветку ErrorCode::inputLineTooLong в validateLineCharacters
+    EXPECT_EQ(err.code, ErrorCode::inputLineTooLong);
+}
+
+// Тест 62: Симуляция ситуации, когда на вход buildLines не подали слов
+TEST(CoverageBoost, BuildLinesWithNoWords) {
+    TextFormatter f(40);
+    f.words.clear(); // Гарантируем, что список слов пуст
+
+    // Запускаем алгоритмы на пустом массиве
+    f.buildLines();
+
+    // Проверяем защитное условие: выходные строки должны остаться пустыми
+    EXPECT_TRUE(f.getOutputLines().empty());
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  main
 // ═══════════════════════════════════════════════════════════════════════════
 

@@ -124,85 +124,92 @@ static bool isPunctToken(const std::string& token) {
     return true;
 }
 
+std::vector<std::string> TextFormatter::splitIntoLines(const std::string& text) {
+    std::vector<std::string> lines;
+    std::istringstream ss(text);
+    std::string line;
+    while (std::getline(ss, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        lines.push_back(line);
+    }
+    return lines;
+}
+
+FormatError TextFormatter::validateLineCharacters(const std::string& line, int lineIdx) {
+    int lineCharLen = utf8Len(line);
+    if (lineCharLen > 1024) {
+        FormatError err;
+        err.code = ErrorCode::inputLineTooLong;
+        return err;
+    }
+
+    auto codepoints = utf8Codepoints(line);
+    for (int cpIdx = 0; cpIdx < static_cast<int>(codepoints.size()); ++cpIdx) {
+        const std::string& cp = codepoints[cpIdx];
+        if (!isAllowedCodepoint(cp)) {
+            FormatError err;
+            err.code         = ErrorCode::invalidCharacter;
+            err.lineNumber   = lineIdx + 1;
+            err.charPosition = cpIdx + 1;
+            err.invalidChar  = cp[0];
+            return err;
+        }
+    }
+
+    FormatError ok;
+    ok.code = ErrorCode::noError;
+    return ok;
+}
+
+void TextFormatter::processTokensFromLine(const std::string& line) {
+    std::vector<std::string> tokens;
+    std::istringstream ss(line);
+    std::string tok;
+    while (ss >> tok) {
+        tokens.push_back(tok);
+    }
+
+    for (const std::string& t : tokens) {
+        if (t.empty()) continue;
+
+        if (isPunctToken(t)) {
+            if (!words.empty()) {
+                words.back() += t;
+            } else {
+                words.push_back(t);
+            }
+        } else {
+            // Внутреннюю проверку длины слова убираем или оставляем,
+            // так как в конце parseWords всё равно есть финальная проверка.
+            words.push_back(t);
+        }
+    }
+}
+
+
 FormatError TextFormatter::parseWords(const std::string& text) {
     words.clear();
 
-    // Разбиваем текст на строки
-    std::vector<std::string> lines;
-    {
-        std::istringstream ss(text);
-        std::string line;
-        while (std::getline(ss, line)) {
-            // Убираем '\r' (Windows CRLF)
-            if (!line.empty() && line.back() == '\r')
-                line.pop_back();
-            lines.push_back(line);
-        }
-    }
+    // Шаг 1. Разбиваем текст на строки
+    std::vector<std::string> lines = splitIntoLines(text);
 
+    // Шаг 2. Итерируемся по строкам и обрабатываем их
     for (int lineIdx = 0; lineIdx < static_cast<int>(lines.size()); ++lineIdx) {
         const std::string& line = lines[lineIdx];
 
-        // 2.1 Проверяем длину строки в символах (кодовых точках)
-        int lineCharLen = utf8Len(line);
-        if (lineCharLen > 1024) {
-            FormatError err;
-            err.code = ErrorCode::inputLineTooLong;
-            return err;
+        // Шаг 2.1 Валидация длины строки и допустимости символов
+        FormatError validateResult = validateLineCharacters(line, lineIdx);
+        if (validateResult.code != ErrorCode::noError) {
+            return validateResult;
         }
 
-        // 2.2 Проверяем каждый символ (кодовую точку)
-        auto codepoints = utf8Codepoints(line);
-        for (int cpIdx = 0; cpIdx < static_cast<int>(codepoints.size()); ++cpIdx) {
-            const std::string& cp = codepoints[cpIdx];
-            if (!isAllowedCodepoint(cp)) {
-                FormatError err;
-                err.code         = ErrorCode::invalidCharacter;
-                err.lineNumber   = lineIdx + 1;
-                err.charPosition = cpIdx + 1;
-                // Сохраняем первый байт (для ASCII-символов это весь символ)
-                err.invalidChar  = cp[0];
-                return err;
-            }
-        }
-
-        // 2.3 Разбиваем строку на токены по пробелам и табуляции
-        std::vector<std::string> tokens;
-        {
-            std::istringstream ss(line);
-            std::string tok;
-            while (ss >> tok) {
-                tokens.push_back(tok);
-            }
-        }
-
-        // 2.4 Обрабатываем токены
-        for (const std::string& tok : tokens) {
-            if (tok.empty()) continue;
-
-            if (isPunctToken(tok)) {
-                // 2.4.1 Знак препинания — приклеиваем к последнему слову
-                if (!words.empty()) {
-                    words.back() += tok;
-                } else {
-                    words.push_back(tok);
-                }
-            } else {
-                // Длину считаем в символах (кодовых точках)
-                int wordCharLen = utf8Len(tok);
-                // 2.4.2 Проверяем длину слова
-                if (wordCharLen > lineWidth) {
-                    FormatError err;
-                    err.code = ErrorCode::wordTooLong;
-                    return err;
-                }
-                // 2.4.3 Добавляем как новое слово
-                words.push_back(tok);
-            }
-        }
+        // Шаг 2.2 Выделение токенов и наполнение вектора words
+        processTokensFromLine(line);
     }
 
-    // Проверяем слова после приклеивания знаков препинания
+    // Шаг 3. Финальная проверка слов после приклеивания знаков препинания
     for (const std::string& w : words) {
         if (utf8Len(w) > lineWidth) {
             FormatError err;
@@ -215,6 +222,7 @@ FormatError TextFormatter::parseWords(const std::string& text) {
     ok.code = ErrorCode::noError;
     return ok;
 }
+
 
 void TextFormatter::buildLines() {
     outputLines.clear();
